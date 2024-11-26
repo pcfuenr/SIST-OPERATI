@@ -1,155 +1,272 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #define MAX_REFERENCIAS 100
+#define TAMANO_TABLA_HASH 10
 
-// Estructura tabla hash
-typedef struct {
+// Nodo para listas enlazadas en la tabla hash
+typedef struct Nodo {
     int pagina;
-    int bit_acceso; // Para RELOJ
+    struct Nodo *siguiente;
+} Nodo;
+
+// Estructura para los marcos
+typedef struct {
+    int pagina;   // Página cargada en el marco (-1 si está vacío)
+    int usado;    // A modo de bit de uso para el reloj
+    int tiempo;   // Para el LRU
 } Marco;
 
-//Encuentra el largo de la secuencia para usarlo en los remplazos
+// Funciones para tabla hash
+int funcion_hash(int pagina) {
+    return pagina % TAMANO_TABLA_HASH;
+}
+
+Nodo *crear_nodo(int pagina) {
+    Nodo *nuevo = (Nodo *)malloc(sizeof(Nodo));
+    nuevo->pagina = pagina;
+    nuevo->siguiente = NULL;
+    return nuevo;
+}
+
+void insertar_en_hash(Nodo *tabla[], int pagina) {
+    int posicion = funcion_hash(pagina);
+    Nodo *nuevo = crear_nodo(pagina);
+
+    if (tabla[posicion] == NULL) {
+        tabla[posicion] = nuevo;
+    } else {
+        Nodo *temp = tabla[posicion];
+        while (temp->siguiente != NULL) {
+            temp = temp->siguiente;
+        }
+        temp->siguiente = nuevo;
+    }
+}
+
+int buscar_en_hash(Nodo *tabla[], int pagina) {
+    int posicion = funcion_hash(pagina);
+    Nodo *temp = tabla[posicion];
+
+    while (temp != NULL) {
+        if (temp->pagina == pagina) return 1; // Encontrado
+        temp = temp->siguiente;
+    }
+    return 0; // No encontrado
+}
+
+void eliminar_de_hash(Nodo *tabla[], int pagina) {
+    int posicion = funcion_hash(pagina);
+    Nodo *temp = tabla[posicion];
+    Nodo *anterior = NULL;
+
+    while (temp != NULL) {
+        if (temp->pagina == pagina) {
+            if (anterior == NULL) {
+                tabla[posicion] = temp->siguiente;
+            } else {
+                anterior->siguiente = temp->siguiente;
+            }
+            free(temp);
+            return;
+        }
+        anterior = temp;
+        temp = temp->siguiente;
+    }
+}
+
+// Limpia la tabla hash
+void limpiar_tabla(Nodo *tabla[]) {
+    for (int i = 0; i < TAMANO_TABLA_HASH; i++) {
+        Nodo *temp = tabla[i];
+        while (temp != NULL) {
+            Nodo *eliminar = temp;
+            temp = temp->siguiente;
+            free(eliminar);
+        }
+        tabla[i] = NULL;
+    }
+}
+
+// Lee las paginas y guarda la cantidad de ellas
 void leer_referencias(const char *filename, int referencias[], int *num_referencias) {
-    //Abre y verifica si se abre bien el archivo
+    //Verifica si el archivo fue abierto correctamente
     FILE *archivo = fopen(filename, "r");
     if (!archivo) {
         perror("Error al abrir el archivo");
         exit(EXIT_FAILURE);
     }
-    //Setea el numero de referencia en 0, y mientras siga leyendo numeros sumara 1
+    // Setea el largo en 0, luego mientras lea paginas suma 1 al largo hasta que no haya mas que leer
     *num_referencias = 0;
     while (fscanf(archivo, "%d", &referencias[(*num_referencias)]) != EOF) {
         (*num_referencias)++;
     }
     fclose(archivo);
 }
-//Busca si la pagina esta en uno de los marcos y retorna su posición
-int buscar_pagina(Marco marcos[], int num_marcos, int pagina) {
-    for (int i = 0; i < num_marcos; i++) {
-        if (marcos[i].pagina == pagina) return i;
-    }
-    //Si no esta retorna -1
-    return -1;
-}
 
-// ALGORITMO FIFO
+// Algoritmo FIFO
 void fifo(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
+    Nodo *tabla_hash[TAMANO_TABLA_HASH] = {NULL};
     int puntero = 0, fallos = 0;
 
+    //Setea todos los marcos de pagina como vacios
     for (int i = 0; i < num_marcos; i++) marcos[i].pagina = -1;
 
+    //Pasa por todas las referencias
     for (int i = 0; i < num_referencias; i++) {
-        if (buscar_pagina(marcos, num_marcos, referencias[i]) == -1) {
+        //Busca en la tabla si es que está la pagina
+        if (!buscar_en_hash(tabla_hash, referencias[i])) {
+            //Si el marco no está vacio, elimina el "primero" que entró de la tabla hash
+            if (marcos[puntero].pagina != -1) {
+                eliminar_de_hash(tabla_hash, marcos[puntero].pagina);
+            }
+            //remplaza la pagina del marco e inserta en la tabla hash la pagina.
             marcos[puntero].pagina = referencias[i];
+            insertar_en_hash(tabla_hash, referencias[i]);
+            //suma 1 para pasar al siguiente que entro, al pasar el numero de marcos se le hace modulo, asi, siempre sigue al "primero" en entrar
             puntero = (puntero + 1) % num_marcos;
             fallos++;
         }
     }
     printf("FIFO - Fallos de página: %d\n", fallos);
 }
-// ALGORITMO LRU
+
+// Algoritmo LRU
 void lru(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
-    int fallos = 0, tiempo[num_marcos];
-    int tiempo_actual = 0;
+    Nodo *tabla_hash[TAMANO_TABLA_HASH] = {NULL};
+    int tiempo = 0, fallos = 0;
 
-    for (int i = 0; i < num_marcos; i++) {
-        marcos[i].pagina = -1;
-        tiempo[i] = 0;
-    }
+    for (int i = 0; i < num_marcos; i++) marcos[i].pagina = -1;
 
     for (int i = 0; i < num_referencias; i++) {
-        int pagina_actual = referencias[i];
-        int indice = buscar_pagina(marcos, num_marcos, pagina_actual);
+        tiempo++;
 
-        if (indice == -1) { 
-            fallos++;
-            int reemplazo = 0;
-            for (int j = 1; j < num_marcos; j++) {
-                if (marcos[j].pagina == -1) { 
-                    reemplazo = j;
+        if (!buscar_en_hash(tabla_hash, referencias[i])) {
+            int indice_reemplazo = 0, menor_tiempo = INT_MAX;
+
+            for (int j = 0; j < num_marcos; j++) {
+                if (marcos[j].pagina == -1) {
+                    indice_reemplazo = j;
                     break;
-                } else if (tiempo[j] < tiempo[reemplazo]) { 
-                    reemplazo = j;
+                }
+                if (marcos[j].tiempo < menor_tiempo) {
+                    menor_tiempo = marcos[j].tiempo;
+                    indice_reemplazo = j;
                 }
             }
-            marcos[reemplazo].pagina = pagina_actual;
-            tiempo[reemplazo] = tiempo_actual;
-        } else { 
-            tiempo[indice] = tiempo_actual;
+
+            if (marcos[indice_reemplazo].pagina != -1) {
+                eliminar_de_hash(tabla_hash, marcos[indice_reemplazo].pagina);
+            }
+
+            marcos[indice_reemplazo].pagina = referencias[i];
+            marcos[indice_reemplazo].tiempo = tiempo;
+            insertar_en_hash(tabla_hash, referencias[i]);
+            fallos++;
+        } else {
+            for (int j = 0; j < num_marcos; j++) {
+                if (marcos[j].pagina == referencias[i]) {
+                    marcos[j].tiempo = tiempo;
+                    break;
+                }
+            }
         }
-
-        tiempo_actual++;
     }
-
     printf("LRU - Fallos de página: %d\n", fallos);
 }
-//ALGORITMO OPTIMO
+
+// Algoritmo Optimo
 void optimo(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
+    Nodo *tabla_hash[TAMANO_TABLA_HASH] = {NULL};
     int fallos = 0;
 
     for (int i = 0; i < num_marcos; i++) marcos[i].pagina = -1;
 
     for (int i = 0; i < num_referencias; i++) {
-        if (buscar_pagina(marcos, num_marcos, referencias[i]) == -1) {
-            int reemplazo = -1, max_distancia = -1;
+        if (!buscar_en_hash(tabla_hash, referencias[i])) {
+            int indice_reemplazo = -1, max_distancia = -1;
+
             for (int j = 0; j < num_marcos; j++) {
                 if (marcos[j].pagina == -1) {
-                    reemplazo = j;
+                    indice_reemplazo = j;
                     break;
                 }
-                int distancia = MAX_REFERENCIAS;
+
+                int distancia = INT_MAX;
                 for (int k = i + 1; k < num_referencias; k++) {
                     if (marcos[j].pagina == referencias[k]) {
-                        distancia = k;
+                        distancia = k - i;
                         break;
                     }
                 }
+
                 if (distancia > max_distancia) {
                     max_distancia = distancia;
-                    reemplazo = j;
+                    indice_reemplazo = j;
                 }
             }
-            marcos[reemplazo].pagina = referencias[i];
+
+            if (marcos[indice_reemplazo].pagina != -1) {
+                eliminar_de_hash(tabla_hash, marcos[indice_reemplazo].pagina);
+            }
+
+            marcos[indice_reemplazo].pagina = referencias[i];
+            insertar_en_hash(tabla_hash, referencias[i]);
             fallos++;
         }
     }
+
     printf("OPTIMO - Fallos de página: %d\n", fallos);
 }
-//ALGORITMO LRU
+
+// Algoritmo Reloj
 void lru_reloj(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
+    Nodo *tabla_hash[TAMANO_TABLA_HASH] = {NULL};
     int puntero = 0, fallos = 0;
 
     for (int i = 0; i < num_marcos; i++) {
         marcos[i].pagina = -1;
-        marcos[i].bit_acceso = 0;
+        marcos[i].usado = 0;
     }
 
     for (int i = 0; i < num_referencias; i++) {
-        int indice = buscar_pagina(marcos, num_marcos, referencias[i]);
-        if (indice == -1) {
-            while (marcos[puntero].bit_acceso == 1) {
-                marcos[puntero].bit_acceso = 0;
+        if (!buscar_en_hash(tabla_hash, referencias[i])) {
+            while (marcos[puntero].usado == 1) {
+                marcos[puntero].usado = 0;
                 puntero = (puntero + 1) % num_marcos;
             }
+
+            if (marcos[puntero].pagina != -1) {
+                eliminar_de_hash(tabla_hash, marcos[puntero].pagina);
+            }
+
             marcos[puntero].pagina = referencias[i];
-            marcos[puntero].bit_acceso = 1;
+            marcos[puntero].usado = 1;
+            insertar_en_hash(tabla_hash, referencias[i]);
+
             puntero = (puntero + 1) % num_marcos;
             fallos++;
         } else {
-            marcos[indice].bit_acceso = 1;
+            for (int j = 0; j < num_marcos; j++) {
+                if (marcos[j].pagina == referencias[i]) {
+                    marcos[j].usado = 1;
+                    break;
+                }
+            }
         }
     }
+
     printf("RELOJ - Fallos de página: %d\n", fallos);
 }
 
 int main(int argc, char *argv[]) {
-    //Verifica que tenga la estructura correcta
+    //Verifica si tiene la estructura correcta, sino falla
     if (argc != 7) {
         fprintf(stderr, "Uso: %s -m <num_marcos> -a <algoritmo> -f <archivo>\n", argv[0]);
         return EXIT_FAILURE;
@@ -171,10 +288,10 @@ int main(int argc, char *argv[]) {
     }
 
     int referencias[MAX_REFERENCIAS], num_referencias;
-    // Lee las referencias para guardar el numero de ellas
+    //Se calcula el numero de referencias(longitud de la secuencia) para usarla en los algoritmos
     leer_referencias(archivo, referencias, &num_referencias);
 
-    // Dependiendo del algoritmo escrito se ejecuta uno u otro
+    //Usa el algoritmo señalado
     if (strcmp(algoritmo, "FIFO") == 0) {
         fifo(referencias, num_referencias, num_marcos);
     } else if (strcmp(algoritmo, "LRU") == 0) {
@@ -184,8 +301,8 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(algoritmo, "RELOJ") == 0) {
         lru_reloj(referencias, num_referencias, num_marcos);
     } else {
-        //Si lee un algoritmo que no está
-        fprintf(stderr, "Algoritmo incorrecto: %s\n", algoritmo);
+        //Si se escribe un algoritmo invalido pasa esto
+        fprintf(stderr, "Algoritmo no reconocido: %s\n", algoritmo);
         return EXIT_FAILURE;
     }
 
