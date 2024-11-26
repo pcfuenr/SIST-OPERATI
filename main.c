@@ -4,33 +4,37 @@
 
 #define MAX_REFERENCIAS 100
 
+// Estructura tabla hash
 typedef struct {
     int pagina;
-    int bit_acceso; // Para LRU-Reloj
+    int bit_acceso; // Para RELOJ
 } Marco;
 
-// Funciones comunes
+//Encuentra el largo de la secuencia para usarlo en los remplazos
 void leer_referencias(const char *filename, int referencias[], int *num_referencias) {
+    //Abre y verifica si se abre bien el archivo
     FILE *archivo = fopen(filename, "r");
     if (!archivo) {
         perror("Error al abrir el archivo");
         exit(EXIT_FAILURE);
     }
+    //Setea el numero de referencia en 0, y mientras siga leyendo numeros sumara 1
     *num_referencias = 0;
     while (fscanf(archivo, "%d", &referencias[(*num_referencias)]) != EOF) {
         (*num_referencias)++;
     }
     fclose(archivo);
 }
-
+//Busca si la pagina esta en uno de los marcos y retorna su posición
 int buscar_pagina(Marco marcos[], int num_marcos, int pagina) {
     for (int i = 0; i < num_marcos; i++) {
         if (marcos[i].pagina == pagina) return i;
     }
+    //Si no esta retorna -1
     return -1;
 }
 
-// Algoritmos de reemplazo
+// ALGORITMO FIFO
 void fifo(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
     int puntero = 0, fallos = 0;
@@ -46,7 +50,7 @@ void fifo(int referencias[], int num_referencias, int num_marcos) {
     }
     printf("FIFO - Fallos de página: %d\n", fallos);
 }
-
+// ALGORITMO LRU
 void lru(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
     int fallos = 0, tiempo[num_marcos];
@@ -61,20 +65,20 @@ void lru(int referencias[], int num_referencias, int num_marcos) {
         int pagina_actual = referencias[i];
         int indice = buscar_pagina(marcos, num_marcos, pagina_actual);
 
-        if (indice == -1) { // Página no encontrada (fallo de página)
+        if (indice == -1) { 
             fallos++;
             int reemplazo = 0;
             for (int j = 1; j < num_marcos; j++) {
-                if (marcos[j].pagina == -1) { // Encuentra un marco vacío
+                if (marcos[j].pagina == -1) { 
                     reemplazo = j;
                     break;
-                } else if (tiempo[j] < tiempo[reemplazo]) { // Encuentra el menos recientemente usado
+                } else if (tiempo[j] < tiempo[reemplazo]) { 
                     reemplazo = j;
                 }
             }
             marcos[reemplazo].pagina = pagina_actual;
             tiempo[reemplazo] = tiempo_actual;
-        } else { // Página encontrada, actualiza el tiempo
+        } else { 
             tiempo[indice] = tiempo_actual;
         }
 
@@ -83,7 +87,7 @@ void lru(int referencias[], int num_referencias, int num_marcos) {
 
     printf("LRU - Fallos de página: %d\n", fallos);
 }
-
+//ALGORITMO OPTIMO
 void optimo(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
     int fallos = 0;
@@ -116,7 +120,7 @@ void optimo(int referencias[], int num_referencias, int num_marcos) {
     }
     printf("OPTIMO - Fallos de página: %d\n", fallos);
 }
-
+//ALGORITMO LRU
 void lru_reloj(int referencias[], int num_referencias, int num_marcos) {
     Marco marcos[num_marcos];
     int puntero = 0, fallos = 0;
@@ -144,8 +148,8 @@ void lru_reloj(int referencias[], int num_referencias, int num_marcos) {
     printf("RELOJ - Fallos de página: %d\n", fallos);
 }
 
-// Función principal
 int main(int argc, char *argv[]) {
+    //Verifica que tenga la estructura correcta
     if (argc != 7) {
         fprintf(stderr, "Uso: %s -m <num_marcos> -a <algoritmo> -f <archivo>\n", argv[0]);
         return EXIT_FAILURE;
@@ -155,6 +159,7 @@ int main(int argc, char *argv[]) {
     char algoritmo[10];
     char archivo[50];
 
+    //Extrae los parametros
     for (int i = 1; i < argc; i += 2) {
         if (strcmp(argv[i], "-m") == 0) {
             num_marcos = atoi(argv[i + 1]);
@@ -166,8 +171,10 @@ int main(int argc, char *argv[]) {
     }
 
     int referencias[MAX_REFERENCIAS], num_referencias;
+    // Lee las referencias para guardar el numero de ellas
     leer_referencias(archivo, referencias, &num_referencias);
 
+    // Dependiendo del algoritmo escrito se ejecuta uno u otro
     if (strcmp(algoritmo, "FIFO") == 0) {
         fifo(referencias, num_referencias, num_marcos);
     } else if (strcmp(algoritmo, "LRU") == 0) {
@@ -177,7 +184,8 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(algoritmo, "RELOJ") == 0) {
         lru_reloj(referencias, num_referencias, num_marcos);
     } else {
-        fprintf(stderr, "Algoritmo no reconocido: %s\n", algoritmo);
+        //Si lee un algoritmo que no está
+        fprintf(stderr, "Algoritmo incorrecto: %s\n", algoritmo);
         return EXIT_FAILURE;
     }
 
